@@ -18,8 +18,9 @@ export function medirRequisicoes(
   const encerrarMedicao = duracaoDasRequisicoes.startTimer();
 
   resposta.on('finish', () => {
+    const rota: unknown = requisicao.route?.path;
     encerrarMedicao({
-      route: requisicao.path,
+      route: typeof rota === 'string' ? rota : 'sem_rota',
       method: requisicao.method,
       status: String(resposta.statusCode),
     });

@@ -3,6 +3,7 @@ import { esperarBanco, fecharPool } from '../db/pool';
 import { migrar } from '../db/migracao';
 import { criarConexaoRedis } from '../fila/fila';
 import { log } from '../telemetria/log';
+import { registrarErro } from '../telemetria/tracing';
 import { medirRequisicoes } from './metricas-http';
 import { criarRotas } from './rotas';
 
@@ -21,7 +22,7 @@ async function iniciar(): Promise<void> {
 
   aplicacao.use(
     (erro: Error, _requisicao: Request, resposta: Response, _proximo: NextFunction) => {
-      log.error('erro ao atender requisicao: ' + erro.message);
+      registrarErro('erro ao atender requisicao', erro);
       resposta.status(500).json({ erro: 'erro interno' });
     }
   );
@@ -43,6 +44,6 @@ async function iniciar(): Promise<void> {
 }
 
 iniciar().catch((erro) => {
-  log.error('api nao conseguiu iniciar: ' + erro.message);
+  registrarErro('api nao conseguiu iniciar', erro);
   process.exit(1);
 });

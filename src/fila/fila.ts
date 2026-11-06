@@ -1,3 +1,4 @@
+import { context, propagation, ROOT_CONTEXT, type Context } from '@opentelemetry/api';
 import Redis from 'ioredis';
 
 export const NOME_DA_FILA = 'pedidos';
@@ -18,7 +19,13 @@ export async function publicarPedido(
   redis: Redis,
   mensagem: MensagemPedido
 ): Promise<void> {
-  await redis.lpush(NOME_DA_FILA, JSON.stringify(mensagem));
+  const carrier: Record<string, string> = {};
+  propagation.inject(context.active(), carrier);
+  const { traceparent, tracestate } = carrier;
+  await redis.lpush(NOME_DA_FILA, JSON.stringify({
+    ...mensagem,
+    trace_context: { traceparent, tracestate },
+  }));
 }
 
 export async function consumirPedido(
@@ -32,4 +39,18 @@ export async function consumirPedido(
   }
 
   return JSON.parse(resposta[1]) as Record<string, unknown>;
+}
+
+export function contextoDoPedido(mensagem: Record<string, unknown>): Context {
+  const carrier = mensagem.trace_context;
+  if (!carrier || typeof carrier !== 'object' || !('traceparent' in carrier)) {
+    return ROOT_CONTEXT;
+  }
+
+  const traceparent = carrier.traceparent;
+  const tracestate = 'tracestate' in carrier ? carrier.tracestate : undefined;
+  return propagation.extract(ROOT_CONTEXT, {
+    traceparent: typeof traceparent === 'string' ? traceparent : undefined,
+    tracestate: typeof tracestate === 'string' ? tracestate : undefined,
+  });
 }

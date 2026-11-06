@@ -1,0 +1,14 @@
+groups:
+  - name: cobrancas
+    rules:
+      - alert: FalhaEmCobrancas
+        expr: |
+          (
+            sum(rate(cobrancas_processadas_total{job="worker",resultado="falha"}[2m]))
+            /
+            (sum(rate(cobrancas_processadas_total{job="worker"}[2m])) > 0)
+          ) > 0.01
+        for: 45s
+        annotations:
+          summary: Falhas técnicas de cobrança acima do orçamento de erro
+          description: A proporção de falhas nas tentativas de cobrança excedeu 1% na janela de 2 minutos.

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import type Redis from 'ioredis';
+import client from 'prom-client';
 import {
   buscarPedido,
   buscarProduto,
@@ -10,7 +11,15 @@ import {
 } from '../db/consultas';
 import { publicarPedido } from '../fila/fila';
 import { log } from '../telemetria/log';
-import { TIPO_DE_CONTEUDO, coletar } from '../telemetria/metricas';
+import { TIPO_DE_CONTEUDO, coletar, registro } from '../telemetria/metricas';
+import { registrarErro, tracer } from '../telemetria/tracing';
+
+const pedidosCriados = new client.Counter({
+  name: 'pedidos_criados_total',
+  help: 'Pedidos criados e persistidos pela API',
+  registers: [registro],
+});
+pedidosCriados.inc(0);
 
 export function criarRotas(redis: Redis): Router {
   const rotas = Router();
@@ -48,34 +57,49 @@ export function criarRotas(redis: Redis): Router {
   });
 
   rotas.post('/pedidos', async (requisicao, resposta) => {
-    const clienteId = requisicao.body?.cliente_id;
-    const itens: ItemNovoPedido[] = requisicao.body?.itens;
+    await tracer.startActiveSpan('pedido.criar', async (span) => {
+      let pedidoId: number | undefined;
 
-    if (typeof clienteId !== 'string' || !Array.isArray(itens) || itens.length === 0) {
-      resposta.status(400).json({ erro: 'cliente_id e itens sao obrigatorios' });
-      return;
-    }
+      try {
+        const clienteId = requisicao.body?.cliente_id;
+        const itens: ItemNovoPedido[] = requisicao.body?.itens;
 
-    const produtos = await buscarProdutosPorIds(itens.map((item) => item.produto_id));
-    const precoPorProduto = new Map(produtos.map((produto) => [produto.id, produto.preco]));
+        if (typeof clienteId !== 'string' || !Array.isArray(itens) || itens.length === 0) {
+          resposta.status(400).json({ erro: 'cliente_id e itens sao obrigatorios' });
+          return;
+        }
 
-    const faltando = itens.filter((item) => !precoPorProduto.has(item.produto_id));
-    if (faltando.length > 0) {
-      resposta.status(400).json({ erro: 'produto inexistente no pedido' });
-      return;
-    }
+        span.setAttribute('pedido.itens', itens.length);
+        const produtos = await buscarProdutosPorIds(itens.map((item) => item.produto_id));
+        const precoPorProduto = new Map(produtos.map((produto) => [produto.id, produto.preco]));
 
-    const pedido = await criarPedido(clienteId, itens, precoPorProduto);
+        const faltando = itens.filter((item) => !precoPorProduto.has(item.produto_id));
+        if (faltando.length > 0) {
+          resposta.status(400).json({ erro: 'produto inexistente no pedido' });
+          return;
+        }
 
-    await publicarPedido(redis, {
-      pedido_id: pedido.id,
-      cliente_id: clienteId,
-      valor_total: pedido.valor_total,
+        const pedido = await criarPedido(clienteId, itens, precoPorProduto);
+        pedidoId = pedido.id;
+        span.setAttribute('pedido.id', pedido.id);
+        pedidosCriados.inc();
+
+        await publicarPedido(redis, {
+          pedido_id: pedido.id,
+          cliente_id: clienteId,
+          valor_total: pedido.valor_total,
+        });
+
+        log.info('pedido ' + pedido.id + ' criado para ' + clienteId, pedido.id);
+
+        resposta.status(202).json({ pedido_id: pedido.id, status: 'pendente' });
+      } catch (erro) {
+        registrarErro('erro ao criar pedido', erro, pedidoId);
+        throw erro;
+      } finally {
+        span.end();
+      }
     });
-
-    log.info('pedido ' + pedido.id + ' criado para ' + clienteId);
-
-    resposta.status(202).json({ pedido_id: pedido.id, status: 'pendente' });
   });
 
   rotas.get('/pedidos/:id', async (requisicao, resposta) => {
