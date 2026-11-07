@@ -1,6 +1,8 @@
 groups:
   - name: cobrancas
     rules:
+      # O SLO de 99% implica orçamento de erro de 1%. A regra usa esse limite
+      # sobre a proporção de falhas técnicas, com rate() para absorver resets.
       - alert: FalhaEmCobrancas
         expr: |
           (
@@ -8,6 +10,8 @@ groups:
             /
             (sum(rate(cobrancas_processadas_total{job="worker"}[2m])) > 0)
           ) > 0.01
+        # O denominador positivo evita avaliação sem tentativas. A persistência
+        # de 45s atende à janela de 30s a 1m exigida para observar o webhook no aceite.
         for: 45s
         annotations:
           summary: Falhas técnicas de cobrança acima do orçamento de erro

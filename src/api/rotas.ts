@@ -14,6 +14,8 @@ import { log } from '../telemetria/log';
 import { TIPO_DE_CONTEUDO, coletar, registro } from '../telemetria/metricas';
 import { registrarErro, tracer } from '../telemetria/tracing';
 
+// Contador de negócio sem labels de pedido/cliente, conforme a cardinalidade
+// limitada do Prometheus. A série nasce em zero para estar presente desde a subida.
 const pedidosCriados = new client.Counter({
   name: 'pedidos_criados_total',
   help: 'Pedidos criados e persistidos pela API',
@@ -57,6 +59,8 @@ export function criarRotas(redis: Redis): Router {
   });
 
   rotas.post('/pedidos', async (requisicao, resposta) => {
+    // O span manual delimita a criação de negócio e permanece ativo durante
+    // a publicação na fila, permitindo que logs e worker compartilhem o trace.
     await tracer.startActiveSpan('pedido.criar', async (span) => {
       let pedidoId: number | undefined;
 
@@ -79,9 +83,13 @@ export function criarRotas(redis: Redis): Router {
           return;
         }
 
-        const pedido = await criarPedido(clienteId, itens, precoPorProduto);
-        pedidoId = pedido.id;
-        span.setAttribute('pedido.id', pedido.id);
+        // O callback disponibiliza o ID assim que o banco o gera, permitindo
+        // correlacionar até uma falha posterior na inserção dos itens.
+        const pedido = await criarPedido(clienteId, itens, precoPorProduto, (id) => {
+          pedidoId = id;
+          span.setAttribute('pedido.id', id);
+        });
+        // A criação só entra na métrica depois que a transação foi confirmada.
         pedidosCriados.inc();
 
         await publicarPedido(redis, {
@@ -94,9 +102,12 @@ export function criarRotas(redis: Redis): Router {
 
         resposta.status(202).json({ pedido_id: pedido.id, status: 'pendente' });
       } catch (erro) {
+        // Instrumentar e relançar preserva a rejeição fatal do handler async no
+        // Express 4. O processo controla a exportação e a saída de diagnóstico.
         registrarErro('erro ao criar pedido', erro, pedidoId);
         throw erro;
       } finally {
+        // finally também encerra o span nas validações com retorno antecipado.
         span.end();
       }
     });

@@ -10,13 +10,19 @@ Na reprodução de 6 de novembro de 2026, entre **19:46:49,714 e 19:48:16,828 BR
 
 O Prometheus estimou **63,01 tentativas com falha** pela consulta `increase()` da seção Evidências. A diferença em relação aos 64 pedidos é compatível com a extrapolação entre scrapes. O contador mede tentativas, enquanto a contagem exata e o valor vêm do cruzamento dos IDs dos logs com o Postgres.
 
+Na revalidação do candidato local, também em **6 de novembro de 2026**, o `cenario-a` começou às **22:57:01,135 BRT**. Após o disparo do alerta e a parada da carga, os logs continham **61 IDs distintos** com falha de cobrança. A consulta desses IDs no Postgres, filtrada por `status = 'confirmado'`, retornou **`COUNT(*) = 61` e `SUM(valor_total) = 59403.27`**. O valor dessa segunda reprodução foi **59.403,27 na unidade monetária do catálogo**. Cada reprodução tem seu próprio conjunto de pedidos e período de observação.
+
 ## Detecção
 
 No cenário original, a divergência apareceu na conciliação financeira de fim de mês. Na reprodução, o receptor recebeu `FalhaEmCobrancas` em `firing` **77,53 s após iniciar `cenario-a`** e **76,84 s após a primeira falha registrada**. O cenário `normal` anterior permaneceu sem notificações por três minutos. Esse sinal antecipa a investigação para o período em que as falhas ocorrem.
 
+Na revalidação do candidato local, o cenário `normal` novamente completou três minutos sem notificações. Mantendo o histórico saudável no mesmo Prometheus, o receptor recebeu o primeiro `firing` às **22:58:22,221 BRT**, **81,09 s após iniciar `cenario-a`**. A medição inclui a diluição da janela de dois minutos, a coleta e a avaliação do Prometheus, o `for: 45s` e a espera do Alertmanager. As duas medições ficaram dentro do limite de cinco minutos do desafio.
+
 ## Causa raiz
 
 A falha está na função `decidirStatusDoPedido` em [`src/worker/conciliacao.ts`](../src/worker/conciliacao.ts). `recusado` começa como `false` e só é atualizado quando `processarPagamento` retorna. Se a cobrança lança uma exceção, o `catch` registra o erro e a função chega ao retorno com `recusado` ainda `false`, produzindo `confirmado`.
+
+O worker recebe esse retorno e o persiste em `atualizarStatusPedido`. O arquivo, a função e esse mecanismo foram conferidos também no commit `477f700a24fdafb4c03722bf89c7f16c78274bdc` da aplicação base oficial. A instrumentação acrescentada permite observar a exceção e a confirmação no mesmo trace. [Função na base oficial](https://github.com/devfullcycle/mba-arch-desafio-observabilidade/blob/477f700a24fdafb4c03722bf89c7f16c78274bdc/src/worker/conciliacao.ts) · [Persistência no worker da base](https://github.com/devfullcycle/mba-arch-desafio-observabilidade/blob/477f700a24fdafb4c03722bf89c7f16c78274bdc/src/worker/index.ts)
 
 ```ts
 let recusado = false;
@@ -52,9 +58,29 @@ return recusado ? 'recusado' : 'confirmado';
   docker compose --env-file .env.example logs --no-color --no-log-prefix api worker | Select-String -SimpleMatch '844486965ab81ec3770e835322f7581e'
   ```
 
+- **Revalidação do candidato local.** O trace `282d0071401fdb0c4e5bda4cc28ccb99`, do pedido `404`, continha o `POST /pedidos`, `pedido.criar` na API e seu filho `pedido.processar` no worker. O span do worker estava marcado como erro, tinha evento de exceção e `pedido.status=confirmado`. A filtragem dos logs executada em PowerShell foi equivalente ao trecho abaixo, dentro da cópia temporária usada no aceite.
+
+  ```powershell
+  $logs = docker compose -p aceite-observabilidade logs --no-color --no-log-prefix api worker |
+    ForEach-Object { $_ | ConvertFrom-Json -AsHashtable }
+  $logs | Where-Object { $_.trace_id -eq '282d0071401fdb0c4e5bda4cc28ccb99' } |
+    ConvertTo-Json -Compress
+  ```
+
+  A busca retornou quatro registros com `pedido_id=404`, todos no mesmo trace. Os horários abaixo são BRT.
+
+  | Horário | Serviço | span_id | Registro |
+  | --- | --- | --- | --- |
+  | 22:57:04,571 | api | `dace4dd747acc06e` | Pedido criado para `cli-0367`. |
+  | 22:57:04,572 | worker | `7e23f190cad71926` | Mensagem recebida da fila. |
+  | 22:57:04,624 | worker | `7e23f190cad71926` | Log `error` com o motivo `gateway respondeu de forma inesperada`. |
+  | 22:57:04,626 | worker | `7e23f190cad71926` | Pedido confirmado após a falha de cobrança. |
+
+  Nessa execução, a validação leu **1.639 linhas JSON** dos dois processos, todas com os campos obrigatórios. Foram identificados **61 registros de falha de cobrança com `pedido_id`**, cujos IDs distintos originaram a consulta de impacto descrita acima.
+
 ## Lições aprendidas
 
-- **O que correu bem?** O trace do pedido ligou o POST à falha técnica e ao estado gravado. O alerta permaneceu silencioso durante as recusas legítimas do cenário saudável.
+- **O que correu bem?** O trace do pedido ligou o POST à falha técnica e ao estado gravado. O alerta permaneceu silencioso durante as recusas legítimas do cenário saudável. A revalidação em uma stack com volumes novos reproduziu essa correlação e o disparo em até cinco minutos.
 - **O que correu mal?** A decisão de confirmação manteve o valor inicial após a exceção, e as respostas HTTP de sucesso ocultaram a divergência nas métricas externas.
 - **Onde tivemos sorte?** A conciliação financeira encontrou a diferença, e os pedidos persistidos permitiram calcular o valor envolvido por ID.
 
@@ -79,3 +105,15 @@ return recusado ? 'recusado' : 'confirmado';
 | 19:48:07,247 | Recebido o webhook `FalhaEmCobrancas` com `status=firing`. |
 | 19:48:16,828 | Encerrada a janela de impacto após parar a carga e aguardar o processamento dos últimos pedidos. |
 | 19:48:34,452 | Consultada a estimativa de falhas no Prometheus, após o scrape dos contadores finais. |
+
+Revalidação do candidato local em 6 de novembro de 2026, também em BRT. A stack foi iniciada com volumes novos e os cenários foram executados em sequência no mesmo Prometheus.
+
+| Hora | Evento |
+| --- | --- |
+| 22:53:55,985 | Registrado o início da execução do cenário `normal`, após reiniciar o receptor. |
+| 22:57:01,135 | Iniciado o `cenario-a`, após três minutos de carga saudável sem notificações. |
+| 22:57:04,624 | Registrada a falha de cobrança do pedido `404`, correlacionada ao trace `282d0071401fdb0c4e5bda4cc28ccb99`. |
+| 22:57:04,626 | Registrada a confirmação do mesmo pedido. |
+| 22:58:22,221 | Recebido `FalhaEmCobrancas` com `status=firing`, 81,09 s após o início do cenário. |
+
+Após o webhook, a carga foi encerrada e os logs foram cruzados com o Postgres. Esse cruzamento confirmou os 61 pedidos afetados e o valor de 59.403,27 documentados em Impacto.

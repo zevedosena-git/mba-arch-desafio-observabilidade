@@ -20,7 +20,7 @@
       "id": 1,
       "type": "timeseries",
       "title": "Erros HTTP 5xx",
-      "description": "Proporção de respostas 5xx nas rotas de negócio da API.",
+      "description": "Responde se o sistema está com erro. Usa a proporção PromQL de respostas 5xx, incluindo sem_rota para capturar falhas de parsing e excluindo /health e /metrics para medir o tráfego da aplicação.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -34,7 +34,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "(sum(rate(http_request_duration_seconds_count{job=\"api\",route=~\"/(produtos|pedidos)(/:id)?\",status=~\"5..\"}[$__rate_interval])) or 0 * sum(rate(http_request_duration_seconds_count{job=\"api\",route=~\"/(produtos|pedidos)(/:id)?\"}[$__rate_interval]))) / (sum(rate(http_request_duration_seconds_count{job=\"api\",route=~\"/(produtos|pedidos)(/:id)?\"}[$__rate_interval])) > 0)",
+          "expr": "(sum(rate(http_request_duration_seconds_count{job=\"api\",route!~\"/health|/metrics\",status=~\"5..\"}[$__rate_interval])) or 0 * sum(rate(http_request_duration_seconds_count{job=\"api\",route!~\"/health|/metrics\"}[$__rate_interval]))) / (sum(rate(http_request_duration_seconds_count{job=\"api\",route!~\"/health|/metrics\"}[$__rate_interval])) > 0)",
           "legendFormat": "HTTP 5xx",
           "range": true
         }
@@ -51,7 +51,7 @@
       "id": 2,
       "type": "timeseries",
       "title": "Falhas técnicas de cobrança",
-      "description": "Proporção de tentativas de cobrança com falha técnica.",
+      "description": "Responde se o sistema está com erro mesmo quando a API retorna sucesso. Usa a proporção PromQL de cobranças com resultado falha, com os mesmos resultados de negócio usados pelo SLI.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -82,7 +82,7 @@
       "id": 3,
       "type": "timeseries",
       "title": "Latência p95 da API",
-      "description": "Percentil 95 da duração das requisições nas rotas de negócio.",
+      "description": "Responde se o sistema está lento. Usa histogram_quantile sobre rate dos buckets agregados por le para estimar o p95 nas rotas de negócio, agrupadas por template para limitar a cardinalidade.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -113,7 +113,7 @@
       "id": 4,
       "type": "timeseries",
       "title": "Pedidos confirmados e cobranças aprovadas",
-      "description": "Taxas por segundo. A diferença indica confirmações que merecem investigação.",
+      "description": "Responde se o dinheiro está entrando. Compara taxas por segundo de pedidos confirmados e cobranças aprovadas. A diferença expõe confirmações após falha financeira e orienta a busca por pedido nos logs e traces.",
       "gridPos": {
         "h": 8,
         "w": 12,

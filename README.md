@@ -46,10 +46,10 @@ Depois de mudar arquivos em `src/`, execute `docker compose restart api worker`.
 | --- | --- | --- |
 | Métricas | Spring Boot Actuator e Micrometer com Prometheus | `prom-client` e `/metrics` na API e no worker |
 | Tracing | Micrometer Tracing e bridge para OpenTelemetry | OpenTelemetry Node SDK, instrumentação automática, spans manuais e OTLP HTTP direto para o Jaeger |
-| Logs estruturados | JSON no console com campos de correlação no MDC, equivalente no Spring Boot com Logback | Logger compartilhado, `JSON.stringify` no stdout e IDs do span ativo |
+| Logs estruturados | SLF4J com Logback, `logstash-logback-encoder` para JSON e MDC para dados de contexto | Logger compartilhado, `JSON.stringify` no stdout e IDs do span ativo |
 | Propagação de contexto | W3C Trace Context com Micrometer Tracing e OpenTelemetry | `propagation.inject` e `propagation.extract` com `traceparent` e `tracestate` na fila Redis |
 
-O enunciado não identifica a biblioteca de logging usada nas aulas. A linha de logs descreve a equivalência na stack Spring Boot. [Logging](https://docs.spring.io/spring-boot/reference/features/logging.html) · [Tracing](https://docs.spring.io/spring-boot/reference/actuator/tracing.html).
+[Guia prático de logs da Full Cycle](https://github.com/devfullcycle/mba-observabilidade/blob/d6caa3d80a1979bfe64e54432feaa7e846cd0d41/how-to-logs.md) · [Tracing no Spring Boot](https://docs.spring.io/spring-boot/reference/actuator/tracing.html)
 
 ## Decisões técnicas
 
@@ -74,15 +74,17 @@ A diferença entre confirmações e aprovações indica uma divergência a inves
 
 O SLI mede a proporção de tentativas de cobrança processadas sem falha técnica. Aprovações e recusas legítimas completam o processamento. A consulta fica sem resultado enquanto não houver tentativas na janela.
 
+Obs: Inicialmente estava definido com 30 dias, mas foi modificado para 15 dias para ter mais precisão nas medições com os dados atuais.
+
 ```promql
-sum(increase(cobrancas_processadas_total{job="worker",resultado=~"aprovada|recusada"}[30d]))
+sum(increase(cobrancas_processadas_total{job="worker",resultado=~"aprovada|recusada"}[15d]))
 /
-(sum(increase(cobrancas_processadas_total{job="worker"}[30d])) > 0)
+(sum(increase(cobrancas_processadas_total{job="worker"}[15d])) > 0)
 ```
 
-O SLO é **pelo menos 99% em uma janela móvel de 30 dias**. A janela acompanha o ciclo de fechamento financeiro. Como uma falha técnica pode deixar um pedido confirmado sem receita, o objetivo tolera até uma falha a cada 100 tentativas. O error budget é `1 - 0,99 = 0,01`, ou **1%** das tentativas.
+O SLO é **pelo menos 99% em uma janela móvel de 15 dias**. A janela coincide com a retenção do Prometheus nesta stack e permite acompanhar a saúde das cobranças antes do fechamento mensal. Como uma falha técnica pode deixar um pedido confirmado sem receita, o objetivo tolera até uma falha a cada 100 tentativas. O error budget é `1 - 0,99 = 0,01`, ou **1%** das tentativas.
 
-A regra `FalhaEmCobrancas` compara a taxa de falhas técnicas à taxa total em `2m` e dispara acima de `0.01` por `45s`, quando há tentativas na janela. A janela do alerta serve à detecção rápida, e a de 30 dias serve à avaliação do objetivo. A chegada do webhook também depende do scrape, da avaliação a cada 15 segundos e dos 10 segundos de agrupamento inicial do Alertmanager. Confira a regra em [Prometheus /rules](http://localhost:9090/rules).
+A regra `FalhaEmCobrancas` compara a taxa de falhas técnicas à taxa total em `2m` e dispara acima de `0.01` por `45s`, quando há tentativas na janela. A janela do alerta serve à detecção rápida, e a de 15 dias serve à avaliação do objetivo. A chegada do webhook também depende do scrape, da avaliação a cada 15 segundos e dos 10 segundos de agrupamento inicial do Alertmanager. Confira a regra em [Prometheus /rules](http://localhost:9090/rules).
 
 Com esses parâmetros, o cenário saudável completou três minutos sem notificações. O receptor recebeu o primeiro `firing` do `cenario-a` em **77,53 s** na reprodução registrada. [Post-mortem](reports/post-mortem.md)
 
