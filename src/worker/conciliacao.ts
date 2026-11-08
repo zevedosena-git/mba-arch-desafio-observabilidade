@@ -15,12 +15,8 @@ export async function decidirStatusDoPedido(
   try {
     const resultado = await processarPagamento(clienteId, valorTotal);
     recusado = !resultado.aprovado;
-    // Medir o resultado financeiro aqui permite compará-lo ao estado persistido.
-    // O label resultado usa apenas os três valores previstos no desafio.
     cobrancasProcessadas.inc({ resultado: resultado.aprovado ? 'aprovada' : 'recusada' });
   } catch (erro) {
-    // A falha técnica vira métrica e diagnóstico no span pedido.processar.
-    // O estado legado de recusado continua expondo o defeito estudado no incidente.
     cobrancasProcessadas.inc({ resultado: 'falha' });
     registrarFalhaLegado(erro);
     registrarErro('falha na cobranca do pedido', erro, pedidoId);

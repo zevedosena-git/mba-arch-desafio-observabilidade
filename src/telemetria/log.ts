@@ -4,9 +4,7 @@ import { NOME_DO_SERVICO } from './servico';
 type Nivel = 'info' | 'warn' | 'error';
 
 function escrever(level: Nivel, msg: string, pedidoId?: number): void {
-  // Resolver o contexto na escrita acompanha o span ativo do OpenTelemetry.
-  // O esquema do projeto exige trace_id/span_id em toda linha, vazios sem span válido,
-  // e pedido_id quando o pedido é conhecido, para correlação por campo estruturado.
+  // trace_id e span_id existem em toda linha, vazios sem span ativo, para não quebrar filtros.
   const contexto = trace.getActiveSpan()?.spanContext();
   const spanValido = contexto && isSpanContextValid(contexto);
   const linha = {
@@ -19,7 +17,6 @@ function escrever(level: Nivel, msg: string, pedidoId?: number): void {
     pedido_id: pedidoId,
   };
 
-  // Um objeto JSON por linha no stdout permite busca e parsing dos dois processos.
   process.stdout.write(JSON.stringify(linha) + '\n');
 }
 

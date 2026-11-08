@@ -20,7 +20,7 @@
       "id": 1,
       "type": "timeseries",
       "title": "Erros HTTP 5xx",
-      "description": "Responde se o sistema está com erro. Usa a proporção PromQL de respostas 5xx, incluindo sem_rota para capturar falhas de parsing e excluindo /health e /metrics para medir o tráfego da aplicação.",
+      "description": "Responde se o sistema está com erro. Usa a proporção PromQL de respostas 5xx da API, excluindo /health e /metrics para medir só o tráfego da aplicação.",
       "gridPos": {
         "h": 8,
         "w": 12,

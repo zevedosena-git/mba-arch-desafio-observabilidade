@@ -74,8 +74,6 @@ A diferença entre confirmações e aprovações indica uma divergência a inves
 
 O SLI mede a proporção de tentativas de cobrança processadas sem falha técnica. Aprovações e recusas legítimas completam o processamento. A consulta fica sem resultado enquanto não houver tentativas na janela.
 
-Obs: Inicialmente estava definido com 30 dias, mas foi modificado para 15 dias para ter mais precisão nas medições com os dados atuais.
-
 ```promql
 sum(increase(cobrancas_processadas_total{job="worker",resultado=~"aprovada|recusada"}[15d]))
 /
@@ -83,6 +81,16 @@ sum(increase(cobrancas_processadas_total{job="worker",resultado=~"aprovada|recus
 ```
 
 O SLO é **pelo menos 99% em uma janela móvel de 15 dias**. A janela coincide com a retenção do Prometheus nesta stack e permite acompanhar a saúde das cobranças antes do fechamento mensal. Como uma falha técnica pode deixar um pedido confirmado sem receita, o objetivo tolera até uma falha a cada 100 tentativas. O error budget é `1 - 0,99 = 0,01`, ou **1%** das tentativas.
+
+A conta do SLO ao limiar usa a taxa de consumo do error budget (burn rate), que é a proporção de falhas observada dividida pelo budget:
+
+```text
+limiar = error budget × burn rate
+       = (1 - 0,99) × 1
+       = 0,01
+```
+
+Com burn rate 1, o alerta dispara quando a proporção de falhas iguala o ritmo que consome o budget inteiro em exatamente 15 dias. Acima de `0.01`, o serviço gasta mais falha do que o SLO permite e o budget acaba antes do fim da janela. Por isso o limiar é a consequência direta do SLO, e não um número escolhido. O cenário normal não produz falha técnica, então o limiar não gera alarme falso no tráfego saudável. No `cenario-a`, a proporção observada passa de 26%, ou burn rate acima de 26, e esgotaria o budget de 15 dias em menos de 14 horas.
 
 A regra `FalhaEmCobrancas` compara a taxa de falhas técnicas à taxa total em `2m` e dispara acima de `0.01` por `45s`, quando há tentativas na janela. A janela do alerta serve à detecção rápida, e a de 15 dias serve à avaliação do objetivo. A chegada do webhook também depende do scrape, da avaliação a cada 15 segundos e dos 10 segundos de agrupamento inicial do Alertmanager. Confira a regra em [Prometheus /rules](http://localhost:9090/rules).
 

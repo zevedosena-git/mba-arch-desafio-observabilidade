@@ -14,7 +14,9 @@ Na revalidação do candidato local, também em **6 de novembro de 2026**, o `ce
 
 ## Detecção
 
-No cenário original, a divergência apareceu na conciliação financeira de fim de mês. Na reprodução, o receptor recebeu `FalhaEmCobrancas` em `firing` **77,53 s após iniciar `cenario-a`** e **76,84 s após a primeira falha registrada**. O cenário `normal` anterior permaneceu sem notificações por três minutos. Esse sinal antecipa a investigação para o período em que as falhas ocorrem.
+No cenário original, a divergência apareceu na conciliação financeira de fim de mês. Na reprodução, o receptor recebeu `FalhaEmCobrancas` em `firing` **77,53 s após iniciar `cenario-a`** e **76,84 s após a primeira falha registrada**. O cenário `normal` anterior permaneceu sem notificações por três minutos.
+
+A diferença é de ordem de grandeza: a conciliação detectou o problema em até um mês, no fechamento, e o alerta detecta em cerca de 80 segundos. Na reprodução, o ritmo foi de aproximadamente 0,7 pedido confirmado sem cobrança por segundo (64 pedidos em 87 s). Mantido esse ritmo, um mês sem detecção acumula dezenas de milhares de pedidos sem cobrança. A janela de detecção do alerta limita o prejuízo a algumas dezenas de pedidos, que ainda podem ser cobrados ou estornados enquanto o cliente está ativo. Detecção por conciliação trata o problema como perda contábil, e a detecção pelo alerta o trata como incidente operacional.
 
 Na revalidação do candidato local, o cenário `normal` novamente completou três minutos sem notificações. Mantendo o histórico saudável no mesmo Prometheus, o receptor recebeu o primeiro `firing` às **22:58:22,221 BRT**, **81,09 s após iniciar `cenario-a`**. A medição inclui a diluição da janela de dois minutos, a coleta e a avaliação do Prometheus, o `for: 45s` e a espera do Alertmanager. As duas medições ficaram dentro do limite de cinco minutos do desafio.
 
@@ -24,20 +26,27 @@ A falha está na função `decidirStatusDoPedido` em [`src/worker/conciliacao.ts
 
 O worker recebe esse retorno e o persiste em `atualizarStatusPedido`. O arquivo, a função e esse mecanismo foram conferidos também no commit `477f700a24fdafb4c03722bf89c7f16c78274bdc` da aplicação base oficial. A instrumentação acrescentada permite observar a exceção e a confirmação no mesmo trace. [Função na base oficial](https://github.com/devfullcycle/mba-arch-desafio-observabilidade/blob/477f700a24fdafb4c03722bf89c7f16c78274bdc/src/worker/conciliacao.ts) · [Persistência no worker da base](https://github.com/devfullcycle/mba-arch-desafio-observabilidade/blob/477f700a24fdafb4c03722bf89c7f16c78274bdc/src/worker/index.ts)
 
-```ts
-let recusado = false;
-try {
-  const resultado = await processarPagamento(clienteId, valorTotal);
-  recusado = !resultado.aprovado;
-  cobrancasProcessadas.inc({ resultado: resultado.aprovado ? 'aprovada' : 'recusada' });
-} catch (erro) {
-  cobrancasProcessadas.inc({ resultado: 'falha' });
-  registrarFalhaLegado(erro);
-  registrarErro('falha na cobranca do pedido', erro, pedidoId);
-}
+Trecho da aplicação base, sem a instrumentação acrescentada:
 
-return recusado ? 'recusado' : 'confirmado';
+```ts
+export async function decidirStatusDoPedido(
+  clienteId: string,
+  valorTotal: number
+): Promise<StatusDoPedido> {
+  let recusado = false;
+
+  try {
+    const resultado = await processarPagamento(clienteId, valorTotal);
+    recusado = !resultado.aprovado;
+  } catch (erro) {
+    registrarFalhaLegado(erro);
+  }
+
+  return recusado ? 'recusado' : 'confirmado';
+}
 ```
+
+`registrarFalhaLegado` só guarda a ocorrência num array em memória do processo, que nenhum log, métrica ou rota expõe. Por isso a falha era invisível antes da instrumentação.
 
 ## Evidências
 

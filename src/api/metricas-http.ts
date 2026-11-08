@@ -12,10 +12,6 @@ const duracaoDasRequisicoes = new client.Histogram({
   registers: [registro],
 });
 
-// Prometheus precisa de amostras anteriores ao incremento para calcular rate().
-// Inicializar em zero permite observar a primeira falha de parsing no painel 5xx.
-duracaoDasRequisicoes.zero({ route: ROTA_NAO_RESOLVIDA, method: 'POST', status: '500' });
-
 export function medirRequisicoes(
   requisicao: Request,
   resposta: Response,
@@ -24,8 +20,7 @@ export function medirRequisicoes(
   const encerrarMedicao = duracaoDasRequisicoes.startTimer();
 
   resposta.on('finish', () => {
-    // O template do Express agrupa IDs na mesma série, limitando a cardinalidade
-    // do histograma Prometheus. sem_rota agrupa 404 e falhas anteriores ao roteamento.
+    // Template da rota (/produtos/:id), nunca o caminho concreto: o label precisa ter cardinalidade limitada.
     const rota: unknown = requisicao.route?.path;
     encerrarMedicao({
       route: typeof rota === 'string' ? rota : ROTA_NAO_RESOLVIDA,

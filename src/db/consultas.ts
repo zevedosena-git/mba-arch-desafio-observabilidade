@@ -1,4 +1,3 @@
-import { registrarErro } from '../telemetria/tracing';
 import { pool } from './pool';
 
 export type Produto = {
@@ -69,11 +68,9 @@ export async function buscarProdutosPorIds(ids: number[]): Promise<Produto[]> {
 export async function criarPedido(
   clienteId: string,
   itens: ItemNovoPedido[],
-  precoPorProduto: Map<number, number>,
-  aoIdentificarPedido?: (pedidoId: number) => void
+  precoPorProduto: Map<number, number>
 ): Promise<{ id: number; valor_total: number }> {
   const cliente = await pool.connect();
-  let pedidoIdParaLog: number | undefined;
 
   try {
     await cliente.query('BEGIN');
@@ -92,10 +89,6 @@ export async function criarPedido(
     );
 
     const pedidoId: number = pedidoInserido.rows[0].id;
-    // Guardar e comunicar o ID antes dos itens permite diagnóstico estruturado
-    // de uma transação que falhe depois de gerar o identificador do pedido.
-    pedidoIdParaLog = pedidoId;
-    aoIdentificarPedido?.(pedidoId);
 
     for (const item of itens) {
       await cliente.query(
@@ -114,9 +107,6 @@ export async function criarPedido(
 
     return { id: pedidoId, valor_total: valorTotal };
   } catch (erro) {
-    // O diagnóstico usa o span ativo do POST e o pedido_id quando disponível.
-    // Rollback e relançamento continuam a cargo deste limite transacional.
-    registrarErro('erro na transacao de criacao do pedido', erro, pedidoIdParaLog);
     await cliente.query('ROLLBACK');
     throw erro;
   } finally {
